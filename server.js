@@ -14,6 +14,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3001;
 const app = express();
 
+// Session warmup tracking
+const SERVER_START_TIME = Date.now();
+const SESSION_WARMUP_MS = parseInt(process.env.SESSION_WARMUP_MS || '300000'); // 5 minutes default
+let sessionWarmedUp = SESSION_WARMUP_MS === 0; // Bypass if set to 0
+
 // Middleware
 app.use(cors());
 app.use(express.json());
@@ -105,6 +110,29 @@ app.delete('/api/files/:filename', (req, res) => {
   } else {
     res.status(404).json({ error: 'File not found' });
   }
+});
+
+// Session warmup status endpoint
+app.get('/api/warmup-status', (req, res) => {
+  const now = Date.now();
+  const elapsed = now - SERVER_START_TIME;
+  const remaining = Math.max(0, SESSION_WARMUP_MS - elapsed);
+  const isWarmedUp = remaining === 0 || sessionWarmedUp;
+  
+  res.json({
+    warmed: isWarmedUp,
+    elapsedMs: elapsed,
+    remainingMs: remaining,
+    remainingSeconds: Math.ceil(remaining / 1000),
+    warmedUpPercent: Math.min(100, Math.round((elapsed / SESSION_WARMUP_MS) * 100)),
+    message: isWarmedUp ? '✅ Session ready' : `⏳ Session warming up... ${Math.ceil(remaining / 1000)}s remaining`
+  });
+});
+
+// Bypass warmup endpoint (optional, for development)
+app.post('/api/bypass-warmup', (req, res) => {
+  sessionWarmedUp = true;
+  res.json({ success: true, message: 'Session warmup bypassed!' });
 });
 
 // Check if Ollama is running

@@ -147,6 +147,7 @@ export default function DocumentProcessor() {
   const [eta, setEta] = useState(null);
   const [startTime, setStartTime] = useState(null);
   const [ollamaInitMessage, setOllamaInitMessage] = useState("");
+  const [warmupStatus, setWarmupStatus] = useState(null);
 
   const inputRef = useRef(null);
   const processingRef = useRef(false);
@@ -155,8 +156,24 @@ export default function DocumentProcessor() {
 
   useEffect(() => { filesRef.current = files; }, [files]);
 
+  // Check warmup status
   useEffect(() => {
-    const checkOllama = async () => {
+    const checkWarmup = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/warmup-status`);
+        const data = await res.json();
+        setWarmupStatus(data);
+      } catch (err) {
+        console.error('Warmup check error:', err);
+      }
+    };
+    
+    checkWarmup();
+    const interval = setInterval(checkWarmup, 1000); // Update every second
+    return () => clearInterval(interval);
+  }, []);
+
+  // Check Ollama status
       try {
         const res = await fetch(`${API_BASE}/ollama/status`);
         const data = await res.json();
@@ -204,6 +221,19 @@ export default function DocumentProcessor() {
 
   // Server auto-initializes Ollama on hosting deployment
   // No manual setup needed on user PC
+
+  const bypassWarmup = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/bypass-warmup`, { method: 'POST' });
+      const data = await res.json();
+      if (data.success) {
+        setWarmupStatus(prev => ({ ...prev, warmed: true, remainingSeconds: 0 }));
+        alert('✅ Session warmup bypassed!');
+      }
+    } catch (err) {
+      console.error('Bypass error:', err);
+    }
+  };
 
   const setupOllama = async () => {
     setSetupLoading(true);
@@ -331,7 +361,32 @@ export default function DocumentProcessor() {
             />
           )}
           
-          {/* No setup button - server auto-initializes on hosting */}
+          {/* Warmup Status */}
+          {warmupStatus && !warmupStatus.warmed && (
+            <div style={{ display: "flex", gap: 8, alignItems: "center", padding: "8px 12px", borderRadius: 8, background: "rgba(251,191,36,0.15)", border: "1px solid rgba(251,191,36,0.3)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, color: "#fbbf24" }}>
+                ⏱️ {warmupStatus.remainingSeconds}s
+              </div>
+              <button 
+                onClick={bypassWarmup}
+                style={{ 
+                  padding: "4px 8px", 
+                  borderRadius: 6, 
+                  border: "1px solid rgba(251,191,36,0.3)",
+                  background: "rgba(251,191,36,0.2)", 
+                  color: "#fbbf24", 
+                  fontSize: 11, 
+                  fontWeight: 600,
+                  cursor: "pointer",
+                  transition: "all 0.2s ease"
+                }}
+                onMouseOver={(e) => e.target.style.background = "rgba(251,191,36,0.3)"}
+                onMouseOut={(e) => e.target.style.background = "rgba(251,191,36,0.2)"}
+              >
+                Bypass
+              </button>
+            </div>
+          )}
 
           <div style={{ padding: "8px 12px", borderRadius: 8, background: ollamaStatus === "ready" ? "rgba(74,222,128,0.15)" : "rgba(248,113,113,0.15)", color: ollamaStatus === "ready" ? "#4ade80" : "#f87171", fontSize: 11, fontWeight: 600, minWidth: 200, textAlign: "center" }}>
             {ollamaInitMessage || (ollamaStatus === "ready" ? "🟢 Server Ready" : ollamaStatus === "offline" ? "🔴 Initializing..." : "⚠️ Error")}
@@ -340,6 +395,24 @@ export default function DocumentProcessor() {
       </div>
 
       <div style={{ padding: "24px 32px" }}>
+        {/* Warmup Progress Bar */}
+        {warmupStatus && !warmupStatus.warmed && (
+          <div style={{ marginBottom: 20, padding: "12px 16px", borderRadius: 10, background: "rgba(251,191,36,0.08)", border: "1px solid rgba(251,191,36,0.2)" }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+              <span style={{ fontSize: 12, fontWeight: 600, color: "#fbbf24" }}>
+                Session Warmup: {warmupStatus.remainingSeconds}s remaining
+              </span>
+              <span style={{ fontSize: 11, color: "var(--text-secondary)" }}>
+                {warmupStatus.warmedUpPercent}%
+              </span>
+            </div>
+            <ProgressBar value={warmupStatus.warmedUpPercent} max={100} color="#fbbf24" />
+            <p style={{ margin: "8px 0 0 0", fontSize: 11, color: "var(--text-secondary)" }}>
+              ⚠️ Waiting for session to warm up (prevents first-message ban on hosting platforms)
+            </p>
+          </div>
+        )}
+
         {/* Drop Zone */}
         <div
           onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
