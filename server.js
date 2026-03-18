@@ -110,7 +110,7 @@ app.delete('/api/files/:filename', (req, res) => {
 // Check if Ollama is running
 app.get('/api/ollama/status', async (req, res) => {
   try {
-    const response = await fetch('http://localhost:11434/api/tags', { timeout: 3000 });
+    const response = await fetch('http://localhost:11434/api/tags', { timeout: 2000 });
     if (response.ok) {
       const data = await response.json();
       const hasModels = data.models && data.models.length > 0;
@@ -120,12 +120,15 @@ app.get('/api/ollama/status', async (req, res) => {
         models: data.models
       });
     } else {
-      res.json({ running: false, message: '⏳ Server initializing AI model... (4-5 min on first deploy)' });
+      res.json({ 
+        running: false, 
+        message: '⏳ Ollama initializing... (deployed on Railway - running separately)' 
+      });
     }
   } catch (err) {
     res.json({ 
       running: false, 
-      message: '⏳ Server initializing AI model... Installing & downloading (4-5 min first time)' 
+      message: '📍 Ollama not available. Deploy on Railway? Set up Ollama separately (local machine or cloud service).'
     });
   }
 });
@@ -134,48 +137,46 @@ app.get('/api/ollama/status', async (req, res) => {
 app.post('/api/ollama/auto-setup', async (req, res) => {
   try {
     const platform = os.platform();
-    const downloadDir = path.join(__dirname, 'downloads');
-    
-    if (!fs.existsSync(downloadDir)) {
-      fs.mkdirSync(downloadDir, { recursive: true });
-    }
 
-    // Step 1: Check if Ollama is already running
+    // Check if Ollama is already running
     try {
-      const response = await fetch('http://localhost:11434/api/tags');
+      const response = await fetch('http://localhost:11434/api/tags', { timeout: 2000 });
       if (response.ok) {
         return res.json({ success: true, status: 'Ollama already running', step: 'pulling' });
       }
     } catch (err) {
-      // Not running, continue with install
+      // Not running
     }
 
-    // Step 2: Check if Ollama command exists
-    try {
-      await execAsync('ollama --version');
-      // Ollama is installed but not running, try to start it
-      exec('start ollama serve', { shell: true }, (error) => {
-        if (error) console.error('Failed to start Ollama:', error);
-      });
-      return res.json({ success: true, status: 'Starting Ollama...', step: 'starting' });
-    } catch (err) {
-      // Ollama not installed
-    }
-
-    // Step 3: Download installer
-    if (platform === 'win32') {
-      const installerUrl = 'https://ollama.ai/download/OllamaSetup.exe';
-      const installerPath = path.join(downloadDir, 'OllamaSetup.exe');
-
+    // For Railway deployment, provide instructions
+    if (process.env.RAILWAY_ENVIRONMENT_NAME) {
       return res.json({
         success: true,
-        status: 'Ready to download',
-        downloadUrl: installerUrl,
-        installerPath,
-        instructions: `1. Download will start
+        status: 'Running on Railway - Ollama setup required',
+        instructions: `
+        Railway containers don't support Ollama installation. 
+        
+        Options:
+        1. Run Ollama on your local machine and connect remotely
+        2. Use a separate Ollama deployment (Docker, cloud service)
+        3. Use Ollama cloud service (https://ollama.ai)
+        
+        After setting up Ollama, the app will automatically detect it.
+        `,
+        step: 'external-setup'
+      });
+    }
+
+    // For local development (non-Railway)
+    if (platform === 'win32') {
+      return res.json({
+        success: true,
+        status: 'Download Ollama for Windows',
+        downloadUrl: 'https://ollama.ai/download/OllamaSetup.exe',
+        instructions: `1. Download OllamaSetup.exe
         2. Run the installer
         3. Ollama will start automatically
-        4. Come back here and click "Connect Local Model" again`,
+        4. Come back and the app will detect it`,
         step: 'download'
       });
     } else if (platform === 'darwin') {
@@ -183,7 +184,9 @@ app.post('/api/ollama/auto-setup', async (req, res) => {
         success: true,
         status: 'Download Ollama for Mac',
         downloadUrl: 'https://ollama.ai/download/Ollama-darwin.zip',
-        instructions: `Download and run the macOS installer, then try again.`,
+        instructions: `1. Download and extract
+        2. Run the app
+        3. Ollama will start automatically`,
         step: 'download'
       });
     } else {
@@ -191,7 +194,7 @@ app.post('/api/ollama/auto-setup', async (req, res) => {
         success: true,
         status: 'Download Ollama for Linux',
         downloadUrl: 'https://ollama.ai',
-        instructions: `Visit https://ollama.ai to download Linux version`,
+        instructions: `Visit https://ollama.ai for Linux installation instructions`,
         step: 'download'
       });
     }
@@ -204,27 +207,31 @@ app.post('/api/ollama/auto-setup', async (req, res) => {
 // Setup Ollama (pull model after manual installation)
 app.post('/api/ollama/setup', async (req, res) => {
   try {
-    // Try to detect if ollama command exists
-    try {
-      await execAsync('ollama --version');
-    } catch (err) {
-      return res.status(400).json({ 
+    // Check if Ollama is running
+    const checkResponse = await fetch('http://localhost:11434/api/tags', { timeout: 2000 });
+    if (!checkResponse.ok) {
+      return res.status(503).json({ 
         success: false, 
-        error: 'Ollama not installed. Click auto-setup button to download.',
-        needsManualInstall: true
+        error: 'Ollama not running',
+        message: 'Please start Ollama first. Use the auto-setup button for instructions.'
       });
     }
 
-    // Pull model
+    // Ollama is running, pull the model
     res.json({ success: true, status: 'Pulling mistral model...' });
     
     // Execute in background
     exec('ollama pull mistral', (error, stdout, stderr) => {
-      if (error) console.error('Ollama pull error:', error);
+      if (error) console.log('Model pull in progress:', error.message);
+      else console.log('✅ Model pulled successfully');
     });
 
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(503).json({ 
+      success: false, 
+      error: 'Ollama not available',
+      message: 'Could not connect to Ollama. Please ensure it\'s installed and running.' 
+    });
   }
 });
 
@@ -238,82 +245,47 @@ app.post('/api/ollama/chat', express.json({ limit: '50mb' }), async (req, res) =
         model: 'mistral',
         prompt: req.body.prompt,
         stream: false
-      })
+      }),
+      timeout: 5000
     });
 
     if (!response.ok) {
-      throw new Error(`Ollama error: ${response.status}`);
+      return res.status(503).json({ 
+        error: 'Ollama not available', 
+        message: 'Please set up Ollama first. See status endpoint for instructions.' 
+      });
     }
 
     const data = await response.json();
     res.json({ response: data.response });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(503).json({ 
+      error: 'Ollama not available', 
+      message: 'Ollama service is not running. Please set up and start Ollama.' 
+    });
   }
 });
 
-// Auto-initialize Ollama on startup
+// Auto-initialize Ollama on startup (optional)
 async function initializeOllama() {
   console.log('🔄 Checking Ollama status...');
   
   try {
-    const response = await fetch('http://localhost:11434/api/tags');
+    const response = await fetch('http://localhost:11434/api/tags', { timeout: 3000 });
     if (response.ok) {
       console.log('✅ Ollama is already running');
       return;
     }
   } catch (err) {
-    console.log('⏳ Ollama not running, checking installation...');
-  }
-
-  try {
-    // Check if ollama command exists
-    await execAsync('which ollama');
-    console.log('📍 Ollama found, starting...');
-  } catch (err) {
-    // Ollama not installed, install it on Linux/macOS
-    if (process.platform === 'linux' || process.platform === 'darwin') {
-      console.log('📥 Ollama not installed. Installing...');
-      try {
-        await execAsync('curl -fsSL https://ollama.ai/install.sh | sh');
-        console.log('✅ Ollama installed');
-      } catch (installErr) {
-        console.log('⚠️ Install attempt:', installErr.message);
-        // Try alternate method
-        try {
-          await execAsync('apt-get update && apt-get install -y ollama');
-          console.log('✅ Ollama installed via apt');
-        } catch (aptErr) {
-          console.log('⚠️ APT install:', aptErr.message);
-        }
-      }
-    }
-  }
-
-  // Start Ollama service
-  try {
-    if (process.platform === 'linux' || process.platform === 'darwin') {
-      console.log('🚀 Starting Ollama service...');
-      exec('nohup ollama serve > /tmp/ollama.log 2>&1 &');
-      console.log('⏳ Waiting for Ollama to initialize (5 seconds)...');
-      await new Promise(r => setTimeout(r, 5000));
-      
-      console.log('📦 Pulling Mistral model (this may take a few minutes)...');
-      exec('ollama pull mistral', (err, stdout, stderr) => {
-        if (err) {
-          console.log('ℹ️ Model pull in progress or error:', err.message);
-        } else {
-          console.log('✅ Mistral model ready');
-        }
-      });
-    }
-  } catch (err) {
-    console.log('ℹ️ Ollama start note:', err.message);
+    console.log('ℹ️ Ollama not available (this is optional). App will work without it.');
+    console.log('ℹ️ To use AI features, set up Ollama separately (local or cloud service).');
   }
 }
 
-// Initialize Ollama
-initializeOllama();
+// Initialize Ollama check (non-blocking)
+initializeOllama().catch(err => {
+  console.log('ℹ️ Ollama initialization skipped:', err.message);
+});
 
 app.listen(PORT, () => {
   console.log(`Server running on http://localhost:${PORT}`);
